@@ -1,0 +1,15 @@
+{
+    "version": "0.0.1",
+
+    "artifacts": {
+
+        "python3": {
+            "virtual environment": {
+                "description": "A virtual environment for Python projects",
+                "identifier": ["pyvenv.cfg"],
+                "type": "directory",
+                "rm": "all"
+            }
+        }
+    }
+}
