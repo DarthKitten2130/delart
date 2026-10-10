@@ -77,11 +77,16 @@ func main() {
 						if infoErr != nil {
 							return fmt.Errorf("read metadata for %s: %w", path, infoErr)
 						}
+						size, sizeErr := artifactSize(path, artifact.Type, info)
+						if sizeErr != nil {
+							return sizeErr
+						}
 						results = append(results, scanResult{
 							language:     artifact.Language,
 							artifact:     artifact.Name,
 							artifactType: artifact.Type,
 							createdAt:    info.ModTime(),
+							size:         size,
 							path:         path,
 						})
 					}
@@ -112,18 +117,50 @@ type scanResult struct {
 	artifact     string
 	artifactType string
 	createdAt    time.Time
+	size         int64
 	path         string
+}
+
+func artifactSize(path, artifactType string, info fs.FileInfo) (int64, error) {
+	if artifactType == "file" {
+		return info.Size(), nil
+	}
+
+	var size int64
+	err := filepath.WalkDir(path, func(currentPath string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("read size for %s: %w", currentPath, err)
+		}
+		if entry.IsDir() {
+			return nil
+		}
+
+		entryInfo, infoErr := entry.Info()
+		if infoErr != nil {
+			return fmt.Errorf("read metadata for %s: %w", currentPath, infoErr)
+		}
+		if entryInfo.Mode().IsRegular() {
+			size += entryInfo.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return size, nil
 }
 
 // printScanResults renders detected artifacts as a bordered table.
 func printScanResults(results []scanResult) {
 	rows := make([][]string, 0, len(results)+1)
-	rows = append(rows, []string{"LANGUAGE", "ARTIFACT TYPE", "DATE OF CREATION", "PATH"})
+	rows = append(rows, []string{"LANGUAGE", "ARTIFACT TYPE", "DATE OF CREATION", "SIZE", "PATH"})
 	for _, result := range results {
 		rows = append(rows, []string{
 			result.language,
 			fmt.Sprintf("%s (%s)", result.artifactType, result.artifact),
 			result.createdAt.Format(time.RFC3339),
+			formatSize(result.size),
 			result.path,
 		})
 	}
@@ -135,6 +172,7 @@ func printScanResults(results []scanResult) {
 				widths[column] = len(value)
 			}
 		}
+
 	}
 
 	separator := make([]string, len(widths))
@@ -154,4 +192,22 @@ func printScanResults(results []scanResult) {
 			fmt.Println(border)
 		}
 	}
+}
+
+func formatSize(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+
+	value := float64(size)
+	units := []string{"KB", "MB", "GB", "TB"}
+	for _, currentUnit := range units {
+		value /= unit
+		if value < unit || currentUnit == units[len(units)-1] {
+			return fmt.Sprintf("%.1f %s", value, currentUnit)
+		}
+	}
+
+	return fmt.Sprintf("%d B", size)
 }

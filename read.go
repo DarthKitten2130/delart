@@ -15,7 +15,8 @@ type Artifact struct {
 	Description string   `json:"description"`
 	Identifiers []string `json:"identifier"`
 	Type        string   `json:"type"`
-	Remove      string   `json:"rm"`
+	// Remove lists paths to remove; an empty list means remove the whole match.
+	Remove []string `json:"rm"`
 }
 
 type artifactManifest struct {
