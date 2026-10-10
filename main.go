@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -11,18 +12,25 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var errFound = fmt.Errorf("file found")
-
 func main() {
 	cmd := &cli.Command{
 		Name:  "scan",
 		Usage: "scans a directory for artifacts",
 		Action: func(context.Context, *cli.Command) error {
-			var foundPath string
-			var rootDir = "."               // Starting directory for the scan
-			var targetFileName = "main.txt" // The file we are looking for
+			version, err := readVersionFile()
+			if err != nil {
+				return err
+			}
 
-			err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+			artifacts, err := readArtifacts()
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Reading artifact definitions version %s\n", version)
+			found := false
+
+			err = filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					// Skip directories we don't have permission to read
 					return nil
@@ -33,25 +41,42 @@ func main() {
 					return filepath.SkipDir
 				}
 
-				// Check if it's the file we want
-				if !d.IsDir() && d.Name() == targetFileName {
-					foundPath = path
-					fmt.Printf("Found file at: %s\n", foundPath)
-					// Optimization 2: Return a custom error to stop the search immediately
-					return errFound
+				for _, artifact := range artifacts {
+					if d.IsDir() && artifact.Type == "directory" {
+						for _, identifier := range artifact.Identifiers {
+							_, statErr := os.Stat(filepath.Join(path, identifier))
+							if statErr == nil {
+								fmt.Printf("Found %s at: %s\n", artifact.Name, path)
+								found = true
+								break
+							}
+							if !errors.Is(statErr, os.ErrNotExist) {
+								return fmt.Errorf("check identifier %q in %s: %w", identifier, path, statErr)
+							}
+						}
+					}
+
+					if !d.IsDir() && artifact.Type == "file" {
+						for _, identifier := range artifact.Identifiers {
+							if d.Name() == identifier {
+								fmt.Printf("Found %s at: %s\n", artifact.Name, path)
+								found = true
+								break
+							}
+						}
+					}
 				}
 
 				return nil
 			})
 
-			if err == errFound {
-				return nil
-			}
 			if err != nil {
 				return err
 			}
-
-			return fmt.Errorf("file '%s' not found", targetFileName)
+			if !found {
+				return fmt.Errorf("no configured artifacts found")
+			}
+			return nil
 		},
 	}
 
