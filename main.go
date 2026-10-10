@@ -8,15 +8,22 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/urfave/cli/v3"
 )
 
+// main configures and runs the artifact scanning command.
 func main() {
 	cmd := &cli.Command{
 		Name:  "scan",
-		Usage: "scans a directory for artifacts",
+		Usage: "scans a directory for artifacts; build and run with sudo to scan protected directories",
 		Action: func(context.Context, *cli.Command) error {
+			if os.Geteuid() != 0 {
+				return fmt.Errorf("permission denied: build the scanner, then run it with sudo: `go build -o delart . && sudo ./delart scan`")
+			}
+
 			version, err := readVersionFile()
 			if err != nil {
 				return err
@@ -27,8 +34,8 @@ func main() {
 				return err
 			}
 
-			fmt.Printf("Reading artifact definitions version %s\n", version)
-			found := false
+			fmt.Printf("Reading artifact definitions version %s\n\n", version)
+			results := make([]scanResult, 0)
 
 			err = filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
@@ -42,12 +49,12 @@ func main() {
 				}
 
 				for _, artifact := range artifacts {
+					matched := false
 					if d.IsDir() && artifact.Type == "directory" {
 						for _, identifier := range artifact.Identifiers {
 							_, statErr := os.Stat(filepath.Join(path, identifier))
 							if statErr == nil {
-								fmt.Printf("Found %s at: %s\n", artifact.Name, path)
-								found = true
+								matched = true
 								break
 							}
 							if !errors.Is(statErr, os.ErrNotExist) {
@@ -59,11 +66,24 @@ func main() {
 					if !d.IsDir() && artifact.Type == "file" {
 						for _, identifier := range artifact.Identifiers {
 							if d.Name() == identifier {
-								fmt.Printf("Found %s at: %s\n", artifact.Name, path)
-								found = true
+								matched = true
 								break
 							}
 						}
+					}
+
+					if matched {
+						info, infoErr := d.Info()
+						if infoErr != nil {
+							return fmt.Errorf("read metadata for %s: %w", path, infoErr)
+						}
+						results = append(results, scanResult{
+							language:     artifact.Language,
+							artifact:     artifact.Name,
+							artifactType: artifact.Type,
+							createdAt:    info.ModTime(),
+							path:         path,
+						})
 					}
 				}
 
@@ -73,14 +93,65 @@ func main() {
 			if err != nil {
 				return err
 			}
-			if !found {
+			if len(results) == 0 {
 				return fmt.Errorf("no configured artifacts found")
 			}
+
+			printScanResults(results)
 			return nil
 		},
 	}
 
 	if err := cmd.Run(context.Background(), os.Args); err != nil {
 		log.Fatal(err)
+	}
+}
+
+type scanResult struct {
+	language     string
+	artifact     string
+	artifactType string
+	createdAt    time.Time
+	path         string
+}
+
+// printScanResults renders detected artifacts as a bordered table.
+func printScanResults(results []scanResult) {
+	rows := make([][]string, 0, len(results)+1)
+	rows = append(rows, []string{"LANGUAGE", "ARTIFACT TYPE", "DATE OF CREATION", "PATH"})
+	for _, result := range results {
+		rows = append(rows, []string{
+			result.language,
+			fmt.Sprintf("%s (%s)", result.artifactType, result.artifact),
+			result.createdAt.Format(time.RFC3339),
+			result.path,
+		})
+	}
+
+	widths := make([]int, len(rows[0]))
+	for _, row := range rows {
+		for column, value := range row {
+			if len(value) > widths[column] {
+				widths[column] = len(value)
+			}
+		}
+	}
+
+	separator := make([]string, len(widths))
+	for column, width := range widths {
+		separator[column] = strings.Repeat("-", width+2)
+	}
+	border := "+" + strings.Join(separator, "+") + "+"
+
+	fmt.Println(border)
+	for rowIndex, row := range rows {
+		fmt.Print("|")
+		for column, value := range row {
+			fmt.Printf(" %-*s |", widths[column], value)
+		}
+		fmt.Println()
+		if rowIndex == 0 || rowIndex == len(rows)-1 {
+			fmt.Println(border)
+		}
 	}
 }

@@ -8,7 +8,9 @@ import (
 
 const artifactsFile = "artifacts.json"
 
+// Artifact describes one artifact variant and the identifiers used to find it.
 type Artifact struct {
+	Language    string   `json:"-"`
 	Name        string   `json:"-"`
 	Description string   `json:"description"`
 	Identifiers []string `json:"identifier"`
@@ -21,6 +23,7 @@ type artifactManifest struct {
 	Artifacts map[string]map[string]Artifact `json:"artifacts"`
 }
 
+// readManifest loads and validates the artifact definition manifest.
 func readManifest() (artifactManifest, error) {
 	var manifest artifactManifest
 
@@ -40,6 +43,7 @@ func readManifest() (artifactManifest, error) {
 	return manifest, nil
 }
 
+// readVersionFile returns the version of the artifact definition manifest.
 func readVersionFile() (string, error) {
 	manifest, err := readManifest()
 	if err != nil {
@@ -49,6 +53,7 @@ func readVersionFile() (string, error) {
 	return manifest.Version, nil
 }
 
+// readArtifacts returns the manifest's nested artifact definitions as scan rules.
 func readArtifacts() ([]Artifact, error) {
 	manifest, err := readManifest()
 	if err != nil {
@@ -65,7 +70,8 @@ func readArtifacts() ([]Artifact, error) {
 				return nil, fmt.Errorf("artifact %q/%q has no identifiers", name, variant)
 			}
 
-			artifact.Name = fmt.Sprintf("%s (%s)", name, variant)
+			artifact.Language = name
+			artifact.Name = variant
 			artifacts = append(artifacts, artifact)
 		}
 	}
